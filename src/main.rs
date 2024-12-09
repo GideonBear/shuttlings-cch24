@@ -1,4 +1,4 @@
-#![feature(never_type)]
+//#![feature(never_type)]
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 use cargo_manifest::Manifest;
@@ -62,9 +62,12 @@ fn c_2_v6_key(from: Ipv6Addr, to: Ipv6Addr) -> String {
 
 struct ContentType(Option<String>);
 
+#[derive(Debug)]
+enum ContentTypeError {}
+
 #[rocket::async_trait]
 impl<'r> FromRequest<'r> for ContentType {
-    type Error = !;
+    type Error = ContentTypeError;
 
     async fn from_request(request: &'r Request<'_>) -> rocket::request::Outcome<Self, Self::Error> {
         // dbg!(request.headers().iter().find(|x| x.name() == "Content-Type"));
