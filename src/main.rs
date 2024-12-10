@@ -1,13 +1,17 @@
 //#![feature(never_type)]
 
 use std::net::{Ipv4Addr, Ipv6Addr};
+use std::sync::{LazyLock, Mutex};
+use std::time::Instant;
 use cargo_manifest::Manifest;
-use rocket::{get, post, routes, Request};
+use rocket::{get, post, routes, Request, Responder};
 use itertools::{Either, Itertools};
 use rocket::http::Status;
 use rocket::request::FromRequest;
 use rocket::response::Redirect;
 use rocket::response::status::{BadRequest, NoContent};
+use rocket::serde::{Deserialize, Serialize};
+use rocket::serde::json::Json;
 use toml::Table;
 
 #[get("/")]
@@ -82,11 +86,11 @@ fn c_5_manifest(content_type: ContentType, mut input: String) -> Result<String, 
     match content_type.0 {
         None => {}
         Some(s) if s == "application/toml" => {}
-        Some(s) if s == "application/json".to_string() => {
+        Some(s) if s == "application/json" => {
             let v: toml::Value = serde_json::from_str(&input).unwrap();
             input = toml::to_string(&v).unwrap()
         }
-        Some(s) if s == "application/yaml".to_string() => {
+        Some(s) if s == "application/yaml" => {
             let v: toml::Value = serde_yaml::from_str(&input).unwrap();
             input = toml::to_string(&v).unwrap()
         }
@@ -121,8 +125,88 @@ fn c_5_manifest(content_type: ContentType, mut input: String) -> Result<String, 
     }
 }
 
+static MILK_BUCKET: LazyLock<Mutex<u64>> = LazyLock::new(|| Mutex::new(5));
+static LAST_FILL_TIME: LazyLock<Mutex<Instant>> = LazyLock::new(|| Mutex::new(Instant::now()));
+
+#[derive(Responder)]
+enum MilkResponse {
+    #[response(status = 200)]
+    WithDrawn(&'static str),
+    #[response(status = 429)]
+    NotAvailable(&'static str),
+    #[response(status = 200)]
+    Conversion(Json<Converter>),
+}
+
+#[derive(Responder)]
+enum MilkError {
+    #[response(status = 400)]
+    BadRequest(()),
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Converter {
+    Liters(f32),
+    Gallons(f32),
+    Litres(f32),
+    Pints(f32),
+}
+
+impl Converter {
+    fn convert(self) -> Self {
+        match self {
+            Self::Liters(n) => Self::Gallons(n * 0.264172),
+            Self::Gallons(n) => Self::Liters(n / 0.264172),
+            Self::Litres(n) => Self::Pints(n * 1.75975),
+            Self::Pints(n) => Self::Litres(n / 1.75975),
+        }
+    }
+}
+
+#[post("/9/milk", data = "<input>")]
+fn c_9_milk(content_type: ContentType, input: String) -> Result<MilkResponse, MilkError> {
+    if LAST_FILL_TIME.lock().unwrap().elapsed().as_secs() >= 1 {
+        println!("Filling time");
+        let mut current = MILK_BUCKET.lock().unwrap();
+        if *current < 5 {
+            *current += LAST_FILL_TIME.lock().unwrap().elapsed().as_secs().min(5);
+        }
+        *LAST_FILL_TIME.lock().unwrap() = Instant::now();
+    }
+
+    match content_type.0 {
+        Some(s) if s == "application/json" => {
+            if *MILK_BUCKET.lock().unwrap() >= 1 {
+                *MILK_BUCKET.lock().unwrap() -= 1;
+                println!("{} left!", *MILK_BUCKET.lock().unwrap());
+                let converter: Converter = serde_json::from_str(&input).map_err(|_| MilkError::BadRequest(()))?;
+                let converter = converter.convert();
+                Ok(MilkResponse::Conversion(Json(converter)))
+            } else {
+                Ok(MilkResponse::NotAvailable("No milk available\n"))
+            }
+        }
+        None | Some(_) => {
+            if *MILK_BUCKET.lock().unwrap() >= 1 {
+                *MILK_BUCKET.lock().unwrap() -= 1;
+                println!("{} left!", *MILK_BUCKET.lock().unwrap());
+                Ok(MilkResponse::WithDrawn("Milk withdrawn\n"))
+            } else {
+                Ok(MilkResponse::NotAvailable("No milk available\n"))
+            }
+        }
+    }
+}
+
+#[post("/9/refill")]
+fn c_9_refill() {
+    *MILK_BUCKET.lock().unwrap() = 5;
+}
+
 #[shuttle_runtime::main]
 async fn main() -> shuttle_rocket::ShuttleRocket {
+
     let rocket = rocket::build().mount("/", routes![
         index,
         c_m1_seek,
@@ -131,6 +215,8 @@ async fn main() -> shuttle_rocket::ShuttleRocket {
         c_2_v6_dest,
         c_2_v6_key,
         c_5_manifest,
+        c_9_milk,
+        c_9_refill,
     ]);
 
     Ok(rocket.into())
