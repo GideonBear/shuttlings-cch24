@@ -1,10 +1,10 @@
 //#![feature(never_type)]
 
-use std::cmp::PartialEq;
-use std::fmt::Display;
-use std::iter::repeat_with;
 use cargo_manifest::Manifest;
+use grid::Grid;
 use itertools::{Either, Itertools};
+use rand::prelude::StdRng;
+use rand::{Rng, SeedableRng};
 use rocket::http::Status;
 use rocket::request::{FromParam, FromRequest};
 use rocket::response::status::{BadRequest, NoContent};
@@ -12,13 +12,13 @@ use rocket::response::Redirect;
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
 use rocket::{get, post, routes, Request, Responder};
+use std::cmp::PartialEq;
+use std::fmt::Display;
+use std::iter::repeat_with;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
-use grid::Grid;
-use rand::{Rng, SeedableRng};
-use rand::prelude::StdRng;
 use toml::Table;
 
 #[get("/")]
@@ -247,7 +247,6 @@ fn c_9_refill() {
     *MILK_BUCKET.lock().unwrap() = 5;
 }
 
-
 const BOARD_SIZE: usize = 4;
 
 struct Board {
@@ -267,7 +266,9 @@ impl Display for Board {
 
 impl Board {
     fn new() -> Self {
-        Self { grid: Grid::new(BOARD_SIZE, BOARD_SIZE) }
+        Self {
+            grid: Grid::new(BOARD_SIZE, BOARD_SIZE),
+        }
     }
 
     fn winner(&self) -> Winner {
@@ -292,7 +293,8 @@ impl Board {
         // Diagonal
         assert_eq!(self.grid.cols(), self.grid.rows(), "Grid is not square");
         fn do_diagonal<F>(grid: &Grid<State>, coord_fn: F) -> Option<Winner>
-            where F: Fn(usize) -> (usize, usize)
+        where
+            F: Fn(usize) -> (usize, usize),
         {
             let mut first = None;
             let mut good = true;
@@ -337,7 +339,10 @@ impl Board {
 
     fn place(&mut self, team: Team, column: Column) -> Result<(), ServiceUnavailable> {
         let column = column.0;
-        let first_space = self.grid.iter_col(column).rposition(|x| matches!(x, State::Empty));
+        let first_space = self
+            .grid
+            .iter_col(column)
+            .rposition(|x| matches!(x, State::Empty));
         match first_space {
             None => Err(ServiceUnavailable(self.to_string())),
             Some(first_space) => {
@@ -348,16 +353,18 @@ impl Board {
     }
 
     fn new_random(rand: &mut StdRng) -> Self {
-        Board { grid: Grid::from_vec(
-            repeat_with(|| rand.gen::<bool>())
-                .take(BOARD_SIZE * BOARD_SIZE)
-                .map(|x| match x {
-                    true => State::Filled(Team::Cookie),
-                    false => State::Filled(Team::Milk),
-                })
-                .collect(),
-            BOARD_SIZE,
-        ) }
+        Board {
+            grid: Grid::from_vec(
+                repeat_with(|| rand.gen::<bool>())
+                    .take(BOARD_SIZE * BOARD_SIZE)
+                    .map(|x| match x {
+                        true => State::Filled(Team::Cookie),
+                        false => State::Filled(Team::Milk),
+                    })
+                    .collect(),
+                BOARD_SIZE,
+            ),
+        }
     }
 }
 
@@ -492,14 +499,23 @@ fn c_12_reset() -> String {
 struct ServiceUnavailable(String);
 
 #[post("/12/place/<team>/<column>")]
-fn c_12_place(team: Result<Team, BadRequest<()>>, column: Result<Column, BadRequest<()>>) -> Result<String, Either<ServiceUnavailable, BadRequest<()>>> {
+fn c_12_place(
+    team: Result<Team, BadRequest<()>>,
+    column: Result<Column, BadRequest<()>>,
+) -> Result<String, Either<ServiceUnavailable, BadRequest<()>>> {
     if BOARD.lock().unwrap().winner().is_finished() {
-        return Err(Either::Left(ServiceUnavailable(BOARD.lock().unwrap().to_string())));
+        return Err(Either::Left(ServiceUnavailable(
+            BOARD.lock().unwrap().to_string(),
+        )));
     }
 
     match (team, column) {
         (Ok(team), Ok(column)) => {
-            BOARD.lock().unwrap().place(team, column).map_err(Either::Left)?;
+            BOARD
+                .lock()
+                .unwrap()
+                .place(team, column)
+                .map_err(Either::Left)?;
             Ok(BOARD.lock().unwrap().to_string())
         }
         (Err(error), _) => Err(Either::Right(error)),
