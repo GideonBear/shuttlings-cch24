@@ -632,6 +632,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
 
 [[package]]
+name = "grid"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36119f3a540b086b4e436bb2b588cf98a68863470e0e880f4d0842f112a3183a"
+
+[[package]]
 name = "h2"
 version = "0.3.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1955,7 +1961,9 @@ name = "shuttlings-cch24"
 version = "0.1.0"
 dependencies = [
  "cargo-manifest",
+ "grid",
  "itertools 0.13.0",
+ "rand",
  "rocket",
  "serde",
  "serde_json",

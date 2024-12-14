@@ -1,17 +1,24 @@
 //#![feature(never_type)]
 
+use std::cmp::PartialEq;
+use std::fmt::Display;
+use std::iter::repeat_with;
 use cargo_manifest::Manifest;
 use itertools::{Either, Itertools};
 use rocket::http::Status;
-use rocket::request::FromRequest;
+use rocket::request::{FromParam, FromRequest};
 use rocket::response::status::{BadRequest, NoContent};
 use rocket::response::Redirect;
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
 use rocket::{get, post, routes, Request, Responder};
 use std::net::{Ipv4Addr, Ipv6Addr};
+use std::str::FromStr;
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
+use grid::Grid;
+use rand::{Rng, SeedableRng};
+use rand::prelude::StdRng;
 use toml::Table;
 
 #[get("/")]
@@ -137,7 +144,7 @@ fn c_5_manifest(
         .as_array()
         .ok_or(Either::Left(NoContent))?;
     let res = orders
-        .into_iter()
+        .iter()
         .filter_map(|order| {
             if let Some(order) = order.as_table() {
                 if let (Some(item), Some(quantity)) = (
@@ -240,6 +247,272 @@ fn c_9_refill() {
     *MILK_BUCKET.lock().unwrap() = 5;
 }
 
+
+const BOARD_SIZE: usize = 4;
+
+struct Board {
+    grid: Grid<State>,
+}
+
+impl Display for Board {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for row in self.grid.iter_rows() {
+            writeln!(f, "⬜{}⬜", row.map(|x| x.to_string()).collect::<String>())?;
+        }
+        writeln!(f, "{}", "⬜".repeat(self.grid.cols() + 2))?;
+        write!(f, "{}", self.winner())?;
+        Ok(())
+    }
+}
+
+impl Board {
+    fn new() -> Self {
+        Self { grid: Grid::new(BOARD_SIZE, BOARD_SIZE) }
+    }
+
+    fn winner(&self) -> Winner {
+        // Vertical
+        for column in self.grid.iter_cols() {
+            let column: Vec<_> = column.collect();
+            if column.iter().all_equal() {
+                if let State::Filled(team) = column.first().unwrap() {
+                    return Winner::Yes(*team);
+                }
+            }
+        }
+        // Horizontal
+        for row in self.grid.iter_rows() {
+            let row: Vec<_> = row.collect();
+            if row.iter().all_equal() {
+                if let State::Filled(team) = row.first().unwrap() {
+                    return Winner::Yes(*team);
+                }
+            }
+        }
+        // Diagonal
+        assert_eq!(self.grid.cols(), self.grid.rows(), "Grid is not square");
+        fn do_diagonal<F>(grid: &Grid<State>, coord_fn: F) -> Option<Winner>
+            where F: Fn(usize) -> (usize, usize)
+        {
+            let mut first = None;
+            let mut good = true;
+            for i in 0..grid.cols() {
+                let coord = coord_fn(i);
+                let curr = &grid[coord];
+                if first.is_none() {
+                    if let State::Filled(team) = curr {
+                        first = Some(team);
+                    } else {
+                        good = false;
+                        break;
+                    }
+                }
+                let first = first.unwrap();
+                if State::Filled(*first) != *curr {
+                    good = false;
+                    break;
+                }
+            }
+            if good {
+                Some(Winner::Yes(*first.unwrap()))
+            } else {
+                None
+            }
+        }
+        //   Top left - bottom right
+        if let Some(winner) = do_diagonal(&self.grid, |i| (i, i)) {
+            return winner;
+        }
+        //   Top right - bottom left
+        if let Some(winner) = do_diagonal(&self.grid, |i| (i, self.grid.cols() - 1 - i)) {
+            return winner;
+        }
+
+        if self.grid.iter().all(|x| matches!(x, State::Filled(_))) {
+            Winner::No
+        } else {
+            Winner::InProgress
+        }
+    }
+
+    fn place(&mut self, team: Team, column: Column) -> Result<(), ServiceUnavailable> {
+        let column = column.0;
+        let first_space = self.grid.iter_col(column).rposition(|x| matches!(x, State::Empty));
+        match first_space {
+            None => Err(ServiceUnavailable(self.to_string())),
+            Some(first_space) => {
+                self.grid[(first_space, column)] = State::Filled(team);
+                Ok(())
+            }
+        }
+    }
+
+    fn new_random(rand: &mut StdRng) -> Self {
+        Board { grid: Grid::from_vec(
+            repeat_with(|| rand.gen::<bool>())
+                .take(BOARD_SIZE * BOARD_SIZE)
+                .map(|x| match x {
+                    true => State::Filled(Team::Cookie),
+                    false => State::Filled(Team::Milk),
+                })
+                .collect(),
+            BOARD_SIZE,
+        ) }
+    }
+}
+
+#[derive(Debug)]
+enum Winner {
+    InProgress,
+    No,
+    Yes(Team),
+}
+
+impl Display for Winner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InProgress => (),
+            Self::No => writeln!(f, "No winner.")?,
+            Self::Yes(team) => writeln!(f, "{} wins!", team)?,
+        }
+        Ok(())
+    }
+}
+
+impl Winner {
+    fn is_finished(&self) -> bool {
+        match self {
+            Winner::InProgress => false,
+            Winner::No => true,
+            Winner::Yes(_) => true,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum State {
+    Empty,
+    Filled(Team),
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self::Empty
+    }
+}
+
+impl Display for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => write!(f, "⬛"),
+            Self::Filled(team) => team.fmt(f),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum Team {
+    Cookie,
+    Milk,
+}
+
+impl Display for Team {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Cookie => write!(f, "🍪"),
+            Self::Milk => write!(f, "🥛"),
+        }
+    }
+}
+
+impl FromStr for Team {
+    type Err = BadRequest<()>;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "cookie" => Ok(Self::Cookie),
+            "milk" => Ok(Self::Milk),
+            _ => Err(BadRequest(())),
+        }
+    }
+}
+
+impl FromParam<'_> for Team {
+    type Error = <Team as FromStr>::Err;
+
+    fn from_param(param: &str) -> Result<Self, Self::Error> {
+        param.parse()
+    }
+}
+
+struct Column(usize);
+
+impl FromStr for Column {
+    type Err = BadRequest<()>;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let n = s.parse().map_err(|_| BadRequest(()))?;
+        match n {
+            1..=BOARD_SIZE => Ok(Self(n - 1)), // It's 1-indexed
+            _ => Err(BadRequest(())),
+        }
+    }
+}
+
+impl FromParam<'_> for Column {
+    type Error = <Column as FromStr>::Err;
+
+    fn from_param(param: &str) -> Result<Self, Self::Error> {
+        param.parse()
+    }
+}
+
+static BOARD: LazyLock<Mutex<Board>> = LazyLock::new(|| Mutex::new(Board::new()));
+
+fn new_rng() -> StdRng {
+    StdRng::seed_from_u64(2024)
+}
+
+static RNG: LazyLock<Mutex<StdRng>> = LazyLock::new(|| Mutex::new(new_rng()));
+
+#[get("/12/board")]
+fn c_12_board() -> String {
+    BOARD.lock().unwrap().to_string()
+}
+
+#[post("/12/reset")]
+fn c_12_reset() -> String {
+    *BOARD.lock().unwrap() = Board::new();
+    *RNG.lock().unwrap() = new_rng();
+    BOARD.lock().unwrap().to_string()
+}
+
+#[derive(Responder)]
+#[response(status = 503)]
+struct ServiceUnavailable(String);
+
+#[post("/12/place/<team>/<column>")]
+fn c_12_place(team: Result<Team, BadRequest<()>>, column: Result<Column, BadRequest<()>>) -> Result<String, Either<ServiceUnavailable, BadRequest<()>>> {
+    if BOARD.lock().unwrap().winner().is_finished() {
+        return Err(Either::Left(ServiceUnavailable(BOARD.lock().unwrap().to_string())));
+    }
+
+    match (team, column) {
+        (Ok(team), Ok(column)) => {
+            BOARD.lock().unwrap().place(team, column).map_err(Either::Left)?;
+            Ok(BOARD.lock().unwrap().to_string())
+        }
+        (Err(error), _) => Err(Either::Right(error)),
+        (_, Err(error)) => Err(Either::Right(error)),
+    }
+}
+
+#[get("/12/random-board")]
+fn c_12_random_board() -> String {
+    let board = Board::new_random(&mut RNG.lock().unwrap());
+    board.to_string()
+}
+
 #[shuttle_runtime::main]
 async fn main() -> shuttle_rocket::ShuttleRocket {
     let rocket = rocket::build().mount(
@@ -254,6 +527,10 @@ async fn main() -> shuttle_rocket::ShuttleRocket {
             c_5_manifest,
             c_9_milk,
             c_9_refill,
+            c_12_board,
+            c_12_reset,
+            c_12_place,
+            c_12_random_board,
         ],
     );
 
