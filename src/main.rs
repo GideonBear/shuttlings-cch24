@@ -552,11 +552,14 @@ mod day_12 {
 }
 
 mod day_16 {
-    use jsonwebtoken::{decode, encode, get_current_timestamp, Algorithm, DecodingKey, EncodingKey, Header, Validation};
-    use rocket::request::Outcome;
-    use rocket::Response;
-    use rocket::response::Responder;
     use super::*;
+    use jsonwebtoken::{
+        decode, encode, get_current_timestamp, Algorithm, DecodingKey, EncodingKey, Header,
+        Validation,
+    };
+    use rocket::request::Outcome;
+    use rocket::response::Responder;
+    use rocket::Response;
 
     #[derive(Debug, Serialize, Deserialize)]
     struct Claims {
@@ -569,14 +572,18 @@ mod day_16 {
         type Error = ();
 
         async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
-            let token = match request
-                .cookies()
-                .get("gift") {
+            let token = match request.cookies().get("gift") {
                 None => return Outcome::Error((Status::BadRequest, ())),
                 Some(x) => x.value(),
             };
             Outcome::Success(
-                decode::<Claims>(&token, &DecodingKey::from_secret(SECRET_KEY.as_ref()), &Validation::default()).unwrap().claims,
+                decode::<Claims>(
+                    &token,
+                    &DecodingKey::from_secret(SECRET_KEY.as_ref()),
+                    &Validation::default(),
+                )
+                .unwrap()
+                .claims,
             )
         }
     }
@@ -597,7 +604,12 @@ mod day_16 {
             gift: input,
             exp: get_current_timestamp(),
         };
-        let token = encode(&Header::default(), &claims, &EncodingKey::from_secret(SECRET_KEY.as_ref())).unwrap();
+        let token = encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(SECRET_KEY.as_ref()),
+        )
+        .unwrap();
         WrapResponse(token)
     }
 
