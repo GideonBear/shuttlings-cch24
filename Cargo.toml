@@ -7,6 +7,7 @@ edition = "2021"
 cargo-manifest = "0.17.0"
 grid = "0.15.0"
 itertools = "0.13.0"
+jsonwebtoken = { version = "9.3.0", default-features = false, features = ["use_pem"] }
 rand = "0.8.5"
 rocket = { version = "0.5.0", features = ["json"] }
 serde = "1.0.215"
