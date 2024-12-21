@@ -23,7 +23,7 @@ use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 use toml::Table;
 
-const SECRET_KEY: &'static str = "4aac49450b24879475bc77b9deb6eddd";
+const SECRET_KEY: &str = "4aac49450b24879475bc77b9deb6eddd";
 
 mod day_minus_1 {
     use super::*;
@@ -190,7 +190,7 @@ mod day_9 {
     static LAST_FILL_TIME: LazyLock<Mutex<Instant>> = LazyLock::new(|| Mutex::new(Instant::now()));
 
     #[derive(Responder)]
-    enum MilkResponse {
+    pub enum MilkResponse {
         #[response(status = 200)]
         WithDrawn(&'static str),
         #[response(status = 429)]
@@ -200,14 +200,14 @@ mod day_9 {
     }
 
     #[derive(Responder)]
-    enum MilkError {
+    pub enum MilkError {
         #[response(status = 400)]
         BadRequest(()),
     }
 
     #[derive(Serialize, Deserialize)]
     #[serde(rename_all = "snake_case")]
-    enum Converter {
+    pub enum Converter {
         Liters(f32),
         Gallons(f32),
         Litres(f32),
@@ -272,7 +272,7 @@ mod day_12 {
 
     const BOARD_SIZE: usize = 4;
 
-    struct Board {
+    pub struct Board {
         grid: Grid<State>,
     }
 
@@ -392,7 +392,7 @@ mod day_12 {
     }
 
     #[derive(Debug)]
-    enum Winner {
+    pub enum Winner {
         InProgress,
         No,
         Yes(Team),
@@ -420,7 +420,7 @@ mod day_12 {
     }
 
     #[derive(Debug, PartialEq)]
-    enum State {
+    pub enum State {
         Empty,
         Filled(Team),
     }
@@ -441,7 +441,7 @@ mod day_12 {
     }
 
     #[derive(Debug, PartialEq, Clone, Copy)]
-    enum Team {
+    pub enum Team {
         Cookie,
         Milk,
     }
@@ -475,7 +475,7 @@ mod day_12 {
         }
     }
 
-    struct Column(usize);
+    pub struct Column(usize);
 
     impl FromStr for Column {
         type Err = BadRequest<()>;
@@ -519,7 +519,7 @@ mod day_12 {
 
     #[derive(Responder)]
     #[response(status = 503)]
-    struct ServiceUnavailable(String);
+    pub struct ServiceUnavailable(String);
 
     #[post("/12/place/<team>/<column>")]
     pub fn place(
@@ -564,7 +564,7 @@ mod day_16 {
     use rocket::Response;
 
     #[derive(Debug, Serialize, Deserialize)]
-    struct Claims {
+    pub struct Claims {
         gift: String,
         exp: u64,
     }
@@ -580,7 +580,7 @@ mod day_16 {
             };
             Outcome::Success(
                 decode::<Claims>(
-                    &token,
+                    token,
                     &DecodingKey::from_secret(SECRET_KEY.as_ref()),
                     &Validation::default(),
                 )
@@ -590,7 +590,7 @@ mod day_16 {
         }
     }
 
-    struct WrapResponse(String);
+    pub struct WrapResponse(String);
 
     impl<'r> Responder<'r, 'static> for WrapResponse {
         fn respond_to(self, req: &'r Request<'_>) -> rocket::response::Result<'static> {
@@ -621,7 +621,7 @@ mod day_16 {
     }
 
     #[derive(Responder)]
-    enum DecodeResponse {
+    pub enum DecodeResponse {
         #[response(status = 200)]
         Claims(String),
         #[response(status = 400)]
@@ -630,7 +630,7 @@ mod day_16 {
         SignatureInvalid(()),
     }
 
-    const PUBLIC_KEY: &'static [u8] = include_bytes!("../day16_santa_public_key.pem");
+    const PUBLIC_KEY: &[u8] = include_bytes!("../day16_santa_public_key.pem");
 
     #[post("/16/decode", data = "<input>")]
     pub fn decode_(input: String) -> DecodeResponse {
@@ -662,13 +662,13 @@ mod day_19 {
     use std::collections::HashMap;
 
     #[derive(Deserialize)]
-    struct QuotePart {
+    pub struct QuotePart {
         author: String,
         quote: String,
     }
 
     #[derive(Serialize, FromRow, Clone)]
-    struct Quote {
+    pub struct Quote {
         id: Uuid,
         author: String,
         quote: String,
@@ -692,11 +692,11 @@ mod day_19 {
         id: &Uuid,
         state: &State<MyState>,
     ) -> Result<Quote, Either<NotFound<String>, BadRequest<String>>> {
-        Ok(sqlx::query_as("SELECT * FROM quotes WHERE id = $1")
+        sqlx::query_as("SELECT * FROM quotes WHERE id = $1")
             .bind(id)
             .fetch_one(&state.pool)
             .await
-            .map_err(|e| Either::Left(NotFound(e.to_string())))?)
+            .map_err(|e| Either::Left(NotFound(e.to_string())))
     }
 
     fn process_uuid(
@@ -767,7 +767,7 @@ mod day_19 {
         sqlx::query("UPDATE quotes SET author = $1, quote = $2, version = $3 WHERE id = $4")
             .bind(&input.author)
             .bind(&input.quote)
-            .bind(&quote.version)
+            .bind(quote.version)
             .bind(id)
             .execute(&state.pool)
             .await
@@ -782,11 +782,11 @@ mod day_19 {
         // Respond with the quote and 201 Created.
         let quote = Quote::from(input.0);
         sqlx::query("INSERT INTO quotes (id, author, quote, created_at, version) values ($1, $2, $3, $4, $5)")
-            .bind(&quote.id)
+            .bind(quote.id)
             .bind(&quote.author)
             .bind(&quote.quote)
-            .bind(&quote.created_at)
-            .bind(&quote.version)
+            .bind(quote.created_at)
+            .bind(quote.version)
             .execute(&state.pool)
             .await
             .unwrap();
@@ -794,7 +794,7 @@ mod day_19 {
     }
 
     #[derive(Serialize)]
-    struct ListResponse {
+    pub struct ListResponse {
         quotes: Vec<Quote>,
         page: i32,
         next_token: Option<String>,
