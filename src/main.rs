@@ -7,11 +7,13 @@ use rand::prelude::StdRng;
 use rand::{Rng, SeedableRng};
 use rocket::http::Status;
 use rocket::request::{FromParam, FromRequest};
-use rocket::response::status::{BadRequest, NoContent, NotFound, Created};
+use rocket::response::status::{BadRequest, Created, NoContent, NotFound};
 use rocket::response::Redirect;
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
-use rocket::{get, post, delete, put, routes, Request, Responder};
+use rocket::{delete, get, post, put, routes, Request, Responder};
+use shuttle_runtime::CustomError;
+use sqlx::Executor;
 use std::cmp::PartialEq;
 use std::fmt::Display;
 use std::iter::repeat_with;
@@ -19,8 +21,6 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
-use sqlx::Executor;
-use shuttle_runtime::CustomError;
 use toml::Table;
 
 const SECRET_KEY: &'static str = "4aac49450b24879475bc77b9deb6eddd";
@@ -654,12 +654,12 @@ mod day_16 {
 }
 
 mod day_19 {
-    use std::collections::HashMap;
+    use super::*;
     use rocket::State;
-    use sqlx::FromRow;
     use sqlx::types::chrono::{DateTime, Utc};
     use sqlx::types::Uuid;
-    use super::*;
+    use sqlx::FromRow;
+    use std::collections::HashMap;
 
     #[derive(Deserialize)]
     struct QuotePart {
@@ -688,17 +688,20 @@ mod day_19 {
         }
     }
 
-    async fn get_quote(id: &Uuid, state: &State<MyState>) -> Result<Quote, Either<NotFound<String>, BadRequest<String>>> {
-        Ok(
-            sqlx::query_as("SELECT * FROM quotes WHERE id = $1")
-                .bind(id)
-                .fetch_one(&state.pool)
-                .await
-                .map_err(|e| Either::Left(NotFound(e.to_string())))?
-        )
+    async fn get_quote(
+        id: &Uuid,
+        state: &State<MyState>,
+    ) -> Result<Quote, Either<NotFound<String>, BadRequest<String>>> {
+        Ok(sqlx::query_as("SELECT * FROM quotes WHERE id = $1")
+            .bind(id)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|e| Either::Left(NotFound(e.to_string())))?)
     }
 
-    fn process_uuid(uuid: Result<Uuid, rocket::serde::uuid::Error>) -> Result<Uuid, Either<NotFound<String>, BadRequest<String>>> {
+    fn process_uuid(
+        uuid: Result<Uuid, rocket::serde::uuid::Error>,
+    ) -> Result<Uuid, Either<NotFound<String>, BadRequest<String>>> {
         match uuid {
             Ok(uuid) => Ok(uuid),
             Err(_) => Err(Either::Right(BadRequest("Bad UUID".to_string()))),
@@ -715,7 +718,10 @@ mod day_19 {
     }
 
     #[get("/19/cite/<id>")]
-    pub async fn cite(id: Result<Uuid, rocket::serde::uuid::Error>, state: &State<MyState>) -> Result<Json<Quote>, Either<NotFound<String>, BadRequest<String>>> {
+    pub async fn cite(
+        id: Result<Uuid, rocket::serde::uuid::Error>,
+        state: &State<MyState>,
+    ) -> Result<Json<Quote>, Either<NotFound<String>, BadRequest<String>>> {
         let id = process_uuid(id)?;
         // Respond with the quote of the given ID.
         // Use 404 Not Found if a quote with the ID does not exist.
@@ -725,7 +731,10 @@ mod day_19 {
     }
 
     #[delete("/19/remove/<id>")]
-    pub async fn remove(id: Result<Uuid, rocket::serde::uuid::Error>, state: &State<MyState>) -> Result<Json<Quote>, Either<NotFound<String>, BadRequest<String>>> {
+    pub async fn remove(
+        id: Result<Uuid, rocket::serde::uuid::Error>,
+        state: &State<MyState>,
+    ) -> Result<Json<Quote>, Either<NotFound<String>, BadRequest<String>>> {
         let id = process_uuid(id)?;
         // Delete and respond with the quote of the given ID.
         // Use 404 Not Found if a quote with the ID does not exist.
@@ -741,7 +750,11 @@ mod day_19 {
     }
 
     #[put("/19/undo/<id>", data = "<input>")]
-    pub async fn undo(id: Result<Uuid, rocket::serde::uuid::Error>, input: Json<QuotePart>, state: &State<MyState>) -> Result<Json<Quote>, Either<NotFound<String>, BadRequest<String>>> {
+    pub async fn undo(
+        id: Result<Uuid, rocket::serde::uuid::Error>,
+        input: Json<QuotePart>,
+        state: &State<MyState>,
+    ) -> Result<Json<Quote>, Either<NotFound<String>, BadRequest<String>>> {
         let id = process_uuid(id)?;
         // Update the author and text, and increment the version number of the quote of the given ID.
         // Respond with the updated quote.
@@ -777,8 +790,7 @@ mod day_19 {
             .execute(&state.pool)
             .await
             .unwrap();
-        Created::new("ha")
-            .body(Json(quote))
+        Created::new("ha").body(Json(quote))
     }
 
     #[derive(Serialize)]
@@ -788,12 +800,15 @@ mod day_19 {
         next_token: Option<String>,
     }
 
-    static TOKENS: LazyLock<Mutex<HashMap<String, i32>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+    static TOKENS: LazyLock<Mutex<HashMap<String, i32>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
     const CHARSET: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
     #[get("/19/list?<token>")]
-    pub async fn list(state: &State<MyState>, token: Option<String>) -> Result<Json<ListResponse>, BadRequest<()>> {
-
+    pub async fn list(
+        state: &State<MyState>,
+        token: Option<String>,
+    ) -> Result<Json<ListResponse>, BadRequest<()>> {
         let next_token = random_string::generate(16, CHARSET);
         let page = match token {
             Some(token) => *TOKENS.lock().unwrap().get(&token).ok_or(BadRequest(()))?,
@@ -801,11 +816,12 @@ mod day_19 {
         };
         TOKENS.lock().unwrap().insert(next_token.clone(), page + 1);
 
-        let quotes: Vec<Quote> = sqlx::query_as("SELECT * FROM quotes ORDER BY created_at ASC LIMIT 4 OFFSET $1")
-            .bind((page - 1) * 3)
-            .fetch_all(&state.pool)
-            .await
-            .unwrap();
+        let quotes: Vec<Quote> =
+            sqlx::query_as("SELECT * FROM quotes ORDER BY created_at ASC LIMIT 4 OFFSET $1")
+                .bind((page - 1) * 3)
+                .fetch_all(&state.pool)
+                .await
+                .unwrap();
         let (quotes, last_page) = match quotes.len() {
             0..4 => (quotes, true),
             4 => (quotes[0..3].to_vec(), false),
@@ -831,9 +847,7 @@ struct MyState {
 }
 
 #[shuttle_runtime::main]
-async fn main(
-    #[shuttle_shared_db::Postgres] pool: sqlx::PgPool,
-) -> shuttle_rocket::ShuttleRocket {
+async fn main(#[shuttle_shared_db::Postgres] pool: sqlx::PgPool) -> shuttle_rocket::ShuttleRocket {
     pool.execute(include_str!("../schema.sql"))
         .await
         .map_err(CustomError::new)?;
