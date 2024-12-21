@@ -7,11 +7,11 @@ use rand::prelude::StdRng;
 use rand::{Rng, SeedableRng};
 use rocket::http::Status;
 use rocket::request::{FromParam, FromRequest};
-use rocket::response::status::{BadRequest, NoContent};
+use rocket::response::status::{BadRequest, NoContent, NotFound, Created};
 use rocket::response::Redirect;
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
-use rocket::{get, post, routes, Request, Responder};
+use rocket::{get, post, delete, put, routes, Request, Responder};
 use std::cmp::PartialEq;
 use std::fmt::Display;
 use std::iter::repeat_with;
@@ -19,6 +19,8 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
+use sqlx::Executor;
+use shuttle_runtime::CustomError;
 use toml::Table;
 
 const SECRET_KEY: &'static str = "4aac49450b24879475bc77b9deb6eddd";
@@ -651,29 +653,221 @@ mod day_16 {
     }
 }
 
+mod day_19 {
+    use std::collections::HashMap;
+    use rocket::State;
+    use sqlx::FromRow;
+    use sqlx::types::chrono::{DateTime, Utc};
+    use sqlx::types::Uuid;
+    use super::*;
+
+    #[derive(Deserialize)]
+    struct QuotePart {
+        author: String,
+        quote: String,
+    }
+
+    #[derive(Serialize, FromRow, Clone)]
+    struct Quote {
+        id: Uuid,
+        author: String,
+        quote: String,
+        created_at: DateTime<Utc>,
+        version: i32,
+    }
+
+    impl From<QuotePart> for Quote {
+        fn from(part: QuotePart) -> Self {
+            Self {
+                id: Uuid::new_v4(),
+                author: part.author,
+                quote: part.quote,
+                created_at: Utc::now(),
+                version: 1,
+            }
+        }
+    }
+
+    async fn get_quote(id: &Uuid, state: &State<MyState>) -> Result<Quote, Either<NotFound<String>, BadRequest<String>>> {
+        Ok(
+            sqlx::query_as("SELECT * FROM quotes WHERE id = $1")
+                .bind(id)
+                .fetch_one(&state.pool)
+                .await
+                .map_err(|e| Either::Left(NotFound(e.to_string())))?
+        )
+    }
+
+    fn process_uuid(uuid: Result<Uuid, rocket::serde::uuid::Error>) -> Result<Uuid, Either<NotFound<String>, BadRequest<String>>> {
+        match uuid {
+            Ok(uuid) => Ok(uuid),
+            Err(_) => Err(Either::Right(BadRequest("Bad UUID".to_string()))),
+        }
+    }
+
+    #[post("/19/reset")]
+    pub async fn reset(state: &State<MyState>) {
+        // Clear the quotes table in the database.
+        sqlx::query("DELETE FROM quotes")
+            .execute(&state.pool)
+            .await
+            .unwrap();
+    }
+
+    #[get("/19/cite/<id>")]
+    pub async fn cite(id: Result<Uuid, rocket::serde::uuid::Error>, state: &State<MyState>) -> Result<Json<Quote>, Either<NotFound<String>, BadRequest<String>>> {
+        let id = process_uuid(id)?;
+        // Respond with the quote of the given ID.
+        // Use 404 Not Found if a quote with the ID does not exist.
+        let quote = get_quote(&id, state).await?;
+
+        Ok(Json(quote))
+    }
+
+    #[delete("/19/remove/<id>")]
+    pub async fn remove(id: Result<Uuid, rocket::serde::uuid::Error>, state: &State<MyState>) -> Result<Json<Quote>, Either<NotFound<String>, BadRequest<String>>> {
+        let id = process_uuid(id)?;
+        // Delete and respond with the quote of the given ID.
+        // Use 404 Not Found if a quote with the ID does not exist.
+        let quote = get_quote(&id, state).await?;
+
+        sqlx::query("DELETE FROM quotes WHERE id = $1")
+            .bind(id)
+            .execute(&state.pool)
+            .await
+            .map_err(|e| Either::Left(NotFound(e.to_string())))?;
+
+        Ok(Json(quote))
+    }
+
+    #[put("/19/undo/<id>", data = "<input>")]
+    pub async fn undo(id: Result<Uuid, rocket::serde::uuid::Error>, input: Json<QuotePart>, state: &State<MyState>) -> Result<Json<Quote>, Either<NotFound<String>, BadRequest<String>>> {
+        let id = process_uuid(id)?;
+        // Update the author and text, and increment the version number of the quote of the given ID.
+        // Respond with the updated quote.
+        // Use 404 Not Found if a quote with the ID does not exist.
+        let mut quote = get_quote(&id, state).await?;
+        quote.author = input.author.clone();
+        quote.quote = input.quote.clone();
+        quote.version += 1;
+
+        sqlx::query("UPDATE quotes SET author = $1, quote = $2, version = $3 WHERE id = $4")
+            .bind(&input.author)
+            .bind(&input.quote)
+            .bind(&quote.version)
+            .bind(id)
+            .execute(&state.pool)
+            .await
+            .map_err(|e| Either::Left(NotFound(e.to_string())))?;
+
+        Ok(Json(quote))
+    }
+
+    #[post("/19/draft", data = "<input>")]
+    pub async fn draft(input: Json<QuotePart>, state: &State<MyState>) -> Created<Json<Quote>> {
+        // Add a quote with a random UUID v4.
+        // Respond with the quote and 201 Created.
+        let quote = Quote::from(input.0);
+        sqlx::query("INSERT INTO quotes (id, author, quote, created_at, version) values ($1, $2, $3, $4, $5)")
+            .bind(&quote.id)
+            .bind(&quote.author)
+            .bind(&quote.quote)
+            .bind(&quote.created_at)
+            .bind(&quote.version)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        Created::new("ha")
+            .body(Json(quote))
+    }
+
+    #[derive(Serialize)]
+    struct ListResponse {
+        quotes: Vec<Quote>,
+        page: i32,
+        next_token: Option<String>,
+    }
+
+    static TOKENS: LazyLock<Mutex<HashMap<String, i32>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+    const CHARSET: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+    #[get("/19/list?<token>")]
+    pub async fn list(state: &State<MyState>, token: Option<String>) -> Result<Json<ListResponse>, BadRequest<()>> {
+
+        let next_token = random_string::generate(16, CHARSET);
+        let page = match token {
+            Some(token) => *TOKENS.lock().unwrap().get(&token).ok_or(BadRequest(()))?,
+            None => 1,
+        };
+        TOKENS.lock().unwrap().insert(next_token.clone(), page + 1);
+
+        let quotes: Vec<Quote> = sqlx::query_as("SELECT * FROM quotes ORDER BY created_at ASC LIMIT 4 OFFSET $1")
+            .bind((page - 1) * 3)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap();
+        let (quotes, last_page) = match quotes.len() {
+            0..4 => (quotes, true),
+            4 => (quotes[0..3].to_vec(), false),
+            _ => unreachable!(),
+        };
+        println!("{}, {last_page}", quotes.len());
+
+        let next_token = match last_page {
+            true => None,
+            false => Some(next_token),
+        };
+
+        Ok(Json(ListResponse {
+            quotes,
+            page,
+            next_token,
+        }))
+    }
+}
+
+struct MyState {
+    pool: sqlx::PgPool,
+}
+
 #[shuttle_runtime::main]
-async fn main() -> shuttle_rocket::ShuttleRocket {
-    let rocket = rocket::build().mount(
-        "/",
-        routes![
-            day_minus_1::index,
-            day_minus_1::seek,
-            day_2::dest,
-            day_2::key,
-            day_2::v6_dest,
-            day_2::v6_key,
-            day_5::manifest,
-            day_9::milk,
-            day_9::refill,
-            day_12::board,
-            day_12::reset,
-            day_12::place,
-            day_12::random_board,
-            day_16::wrap,
-            day_16::unwrap,
-            day_16::decode_,
-        ],
-    );
+async fn main(
+    #[shuttle_shared_db::Postgres] pool: sqlx::PgPool,
+) -> shuttle_rocket::ShuttleRocket {
+    pool.execute(include_str!("../schema.sql"))
+        .await
+        .map_err(CustomError::new)?;
+
+    let state = MyState { pool };
+    let rocket = rocket::build()
+        .mount(
+            "/",
+            routes![
+                day_minus_1::index,
+                day_minus_1::seek,
+                day_2::dest,
+                day_2::key,
+                day_2::v6_dest,
+                day_2::v6_key,
+                day_5::manifest,
+                day_9::milk,
+                day_9::refill,
+                day_12::board,
+                day_12::reset,
+                day_12::place,
+                day_12::random_board,
+                day_16::wrap,
+                day_16::unwrap,
+                day_16::decode_,
+                day_19::reset,
+                day_19::cite,
+                day_19::remove,
+                day_19::undo,
+                day_19::draft,
+                day_19::list,
+            ],
+        )
+        .manage(state);
 
     Ok(rocket.into())
 }
