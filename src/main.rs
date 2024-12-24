@@ -843,13 +843,13 @@ mod day_16 {
 // }
 
 mod day_23 {
+    use super::*;
+    use rocket::data::ByteUnit;
+    use rocket::form::{DataField, Form, FromFormField, ValueField};
+    use rocket::fs::{relative, NamedFile};
+    use rocket::FromForm;
     use std::fmt::Formatter;
     use std::path::{Path, PathBuf};
-    use rocket::data::ByteUnit;
-    use rocket::FromForm;
-    use rocket::fs::{relative, NamedFile};
-    use rocket::form::{DataField, Form, FromFormField, ValueField};
-    use super::*;
 
     #[get("/assets/<path..>")]
     pub async fn serve(path: PathBuf) -> Option<NamedFile> {
@@ -865,7 +865,7 @@ mod day_23 {
     pub enum Color {
         Red,
         Blue,
-        Purple
+        Purple,
     }
 
     impl FromStr for Color {
@@ -920,12 +920,14 @@ mod day_23 {
         let color = color?;
         let next_color = color.next().to_string();
         let color = color.to_string();
-        Ok(format!(r#"<div class="present {color}" hx-get="/23/present/{next_color}" hx-swap="outerHTML">
+        Ok(format!(
+            r#"<div class="present {color}" hx-get="/23/present/{next_color}" hx-swap="outerHTML">
                     <div class="ribbon"></div>
                     <div class="ribbon"></div>
                     <div class="ribbon"></div>
                     <div class="ribbon"></div>
-                </div>"#))
+                </div>"#
+        ))
     }
 
     pub enum OrnamentState {
@@ -955,7 +957,9 @@ mod day_23 {
         type Error = OrnamentStateError;
 
         fn from_param(param: &str) -> Result<Self, Self::Error> {
-            param.parse().map_err(|_| OrnamentStateError::InvalidOrnamentState(()))
+            param
+                .parse()
+                .map_err(|_| OrnamentStateError::InvalidOrnamentState(()))
         }
     }
 
@@ -978,7 +982,10 @@ mod day_23 {
     }
 
     #[get("/23/ornament/<state>/<n>")]
-    pub fn ornament(state: Result<OrnamentState, OrnamentStateError>, n: &str) -> Result<String, OrnamentStateError> {
+    pub fn ornament(
+        state: Result<OrnamentState, OrnamentStateError>,
+        n: &str,
+    ) -> Result<String, OrnamentStateError> {
         let n = html_escape::encode_double_quoted_attribute(n);
         let state = state?;
         let on_class = match state {
@@ -1009,7 +1016,13 @@ mod day_23 {
         }
 
         async fn from_data(field: DataField<'r, '_>) -> rocket::form::Result<'r, Self> {
-            Self::parse(std::str::from_utf8(&field.data.open(ByteUnit::from(10000000)).into_bytes().await?)?)
+            Self::parse(std::str::from_utf8(
+                &field
+                    .data
+                    .open(ByteUnit::from(10000000))
+                    .into_bytes()
+                    .await?,
+            )?)
         }
     }
 
@@ -1045,19 +1058,34 @@ mod day_23 {
 
     #[post("/23/lockfile", data = "<lockfile>")]
     pub fn lockfile(lockfile: Option<Form<LockfileForm>>) -> Result<String, LockfileError> {
-        let lockfile = lockfile.ok_or(LockfileError::BadForm(()))?.lockfile.lockfile.clone()?;
+        let lockfile = lockfile
+            .ok_or(LockfileError::BadForm(()))?
+            .lockfile
+            .lockfile
+            .clone()?;
 
-        Ok(lockfile.package
+        Ok(lockfile
+            .package
             .into_iter()
             .filter_map(|x| x.checksum)
             .map(|x| {
                 let color = x.get(0..6).ok_or(LockfileError::BadChecksum(()))?;
                 // Check for invalid color part
                 u32::from_str_radix(color, 16).map_err(|_| LockfileError::BadChecksum(()))?;
-                let top = u32::from_str_radix(x.get(6..8).ok_or(LockfileError::BadChecksum(()))?, 16).map_err(|_| LockfileError::BadChecksum(()))?.to_string();
-                let left = u32::from_str_radix(x.get(8..10).ok_or(LockfileError::BadChecksum(()))?, 16).map_err(|_| LockfileError::BadChecksum(()))?.to_string();
-                println!(r#"<div style="background-color:#{color};top:{top}px;left:{left}px;"></div>"#);
-                Ok(format!(r#"<div style="background-color:#{color};top:{top}px;left:{left}px;"></div>"#))
+                let top =
+                    u32::from_str_radix(x.get(6..8).ok_or(LockfileError::BadChecksum(()))?, 16)
+                        .map_err(|_| LockfileError::BadChecksum(()))?
+                        .to_string();
+                let left =
+                    u32::from_str_radix(x.get(8..10).ok_or(LockfileError::BadChecksum(()))?, 16)
+                        .map_err(|_| LockfileError::BadChecksum(()))?
+                        .to_string();
+                println!(
+                    r#"<div style="background-color:#{color};top:{top}px;left:{left}px;"></div>"#
+                );
+                Ok(format!(
+                    r#"<div style="background-color:#{color};top:{top}px;left:{left}px;"></div>"#
+                ))
             })
             .collect::<Result<Vec<_>, _>>()?
             .join(""))
@@ -1069,8 +1097,7 @@ struct MyState {
 }
 
 #[shuttle_runtime::main]
-async fn main(
-    // #[shuttle_shared_db::Postgres] pool: sqlx::PgPool,
+async fn main(// #[shuttle_shared_db::Postgres] pool: sqlx::PgPool,
 ) -> shuttle_rocket::ShuttleRocket {
     // pool.execute(include_str!("../schema.sql"))
     //     .await
