@@ -653,206 +653,432 @@ mod day_16 {
     }
 }
 
-mod day_19 {
+// mod day_19 {
+//     use super::*;
+//     use rocket::State;
+//     use sqlx::types::chrono::{DateTime, Utc};
+//     use sqlx::types::Uuid;
+//     use sqlx::FromRow;
+//     use std::collections::HashMap;
+//
+//     #[derive(Deserialize)]
+//     pub struct QuotePart {
+//         author: String,
+//         quote: String,
+//     }
+//
+//     #[derive(Serialize, FromRow, Clone)]
+//     pub struct Quote {
+//         id: Uuid,
+//         author: String,
+//         quote: String,
+//         created_at: DateTime<Utc>,
+//         version: i32,
+//     }
+//
+//     impl From<QuotePart> for Quote {
+//         fn from(part: QuotePart) -> Self {
+//             Self {
+//                 id: Uuid::new_v4(),
+//                 author: part.author,
+//                 quote: part.quote,
+//                 created_at: Utc::now(),
+//                 version: 1,
+//             }
+//         }
+//     }
+//
+//     async fn get_quote(
+//         id: &Uuid,
+//         state: &State<MyState>,
+//     ) -> Result<Quote, Either<NotFound<String>, BadRequest<String>>> {
+//         sqlx::query_as("SELECT * FROM quotes WHERE id = $1")
+//             .bind(id)
+//             .fetch_one(&state.pool)
+//             .await
+//             .map_err(|e| Either::Left(NotFound(e.to_string())))
+//     }
+//
+//     fn process_uuid(
+//         uuid: Result<Uuid, rocket::serde::uuid::Error>,
+//     ) -> Result<Uuid, Either<NotFound<String>, BadRequest<String>>> {
+//         match uuid {
+//             Ok(uuid) => Ok(uuid),
+//             Err(_) => Err(Either::Right(BadRequest("Bad UUID".to_string()))),
+//         }
+//     }
+//
+//     #[post("/19/reset")]
+//     pub async fn reset(state: &State<MyState>) {
+//         // Clear the quotes table in the database.
+//         sqlx::query("DELETE FROM quotes")
+//             .execute(&state.pool)
+//             .await
+//             .unwrap();
+//     }
+//
+//     #[get("/19/cite/<id>")]
+//     pub async fn cite(
+//         id: Result<Uuid, rocket::serde::uuid::Error>,
+//         state: &State<MyState>,
+//     ) -> Result<Json<Quote>, Either<NotFound<String>, BadRequest<String>>> {
+//         let id = process_uuid(id)?;
+//         // Respond with the quote of the given ID.
+//         // Use 404 Not Found if a quote with the ID does not exist.
+//         let quote = get_quote(&id, state).await?;
+//
+//         Ok(Json(quote))
+//     }
+//
+//     #[delete("/19/remove/<id>")]
+//     pub async fn remove(
+//         id: Result<Uuid, rocket::serde::uuid::Error>,
+//         state: &State<MyState>,
+//     ) -> Result<Json<Quote>, Either<NotFound<String>, BadRequest<String>>> {
+//         let id = process_uuid(id)?;
+//         // Delete and respond with the quote of the given ID.
+//         // Use 404 Not Found if a quote with the ID does not exist.
+//         let quote = get_quote(&id, state).await?;
+//
+//         sqlx::query("DELETE FROM quotes WHERE id = $1")
+//             .bind(id)
+//             .execute(&state.pool)
+//             .await
+//             .map_err(|e| Either::Left(NotFound(e.to_string())))?;
+//
+//         Ok(Json(quote))
+//     }
+//
+//     #[put("/19/undo/<id>", data = "<input>")]
+//     pub async fn undo(
+//         id: Result<Uuid, rocket::serde::uuid::Error>,
+//         input: Json<QuotePart>,
+//         state: &State<MyState>,
+//     ) -> Result<Json<Quote>, Either<NotFound<String>, BadRequest<String>>> {
+//         let id = process_uuid(id)?;
+//         // Update the author and text, and increment the version number of the quote of the given ID.
+//         // Respond with the updated quote.
+//         // Use 404 Not Found if a quote with the ID does not exist.
+//         let mut quote = get_quote(&id, state).await?;
+//         quote.author = input.author.clone();
+//         quote.quote = input.quote.clone();
+//         quote.version += 1;
+//
+//         sqlx::query("UPDATE quotes SET author = $1, quote = $2, version = $3 WHERE id = $4")
+//             .bind(&input.author)
+//             .bind(&input.quote)
+//             .bind(quote.version)
+//             .bind(id)
+//             .execute(&state.pool)
+//             .await
+//             .map_err(|e| Either::Left(NotFound(e.to_string())))?;
+//
+//         Ok(Json(quote))
+//     }
+//
+//     #[post("/19/draft", data = "<input>")]
+//     pub async fn draft(input: Json<QuotePart>, state: &State<MyState>) -> Created<Json<Quote>> {
+//         // Add a quote with a random UUID v4.
+//         // Respond with the quote and 201 Created.
+//         let quote = Quote::from(input.0);
+//         sqlx::query("INSERT INTO quotes (id, author, quote, created_at, version) values ($1, $2, $3, $4, $5)")
+//             .bind(quote.id)
+//             .bind(&quote.author)
+//             .bind(&quote.quote)
+//             .bind(quote.created_at)
+//             .bind(quote.version)
+//             .execute(&state.pool)
+//             .await
+//             .unwrap();
+//         Created::new("ha").body(Json(quote))
+//     }
+//
+//     #[derive(Serialize)]
+//     pub struct ListResponse {
+//         quotes: Vec<Quote>,
+//         page: i32,
+//         next_token: Option<String>,
+//     }
+//
+//     static TOKENS: LazyLock<Mutex<HashMap<String, i32>>> =
+//         LazyLock::new(|| Mutex::new(HashMap::new()));
+//     const CHARSET: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+//
+//     #[get("/19/list?<token>")]
+//     pub async fn list(
+//         state: &State<MyState>,
+//         token: Option<String>,
+//     ) -> Result<Json<ListResponse>, BadRequest<()>> {
+//         let next_token = random_string::generate(16, CHARSET);
+//         let page = match token {
+//             Some(token) => *TOKENS.lock().unwrap().get(&token).ok_or(BadRequest(()))?,
+//             None => 1,
+//         };
+//         TOKENS.lock().unwrap().insert(next_token.clone(), page + 1);
+//
+//         let quotes: Vec<Quote> =
+//             sqlx::query_as("SELECT * FROM quotes ORDER BY created_at ASC LIMIT 4 OFFSET $1")
+//                 .bind((page - 1) * 3)
+//                 .fetch_all(&state.pool)
+//                 .await
+//                 .unwrap();
+//         let (quotes, last_page) = match quotes.len() {
+//             0..4 => (quotes, true),
+//             4 => (quotes[0..3].to_vec(), false),
+//             _ => unreachable!(),
+//         };
+//         println!("{}, {last_page}", quotes.len());
+//
+//         let next_token = match last_page {
+//             true => None,
+//             false => Some(next_token),
+//         };
+//
+//         Ok(Json(ListResponse {
+//             quotes,
+//             page,
+//             next_token,
+//         }))
+//     }
+// }
+
+mod day_23 {
+    use std::fmt::Formatter;
+    use std::path::{Path, PathBuf};
+    use rocket::data::ByteUnit;
+    use rocket::FromForm;
+    use rocket::fs::{relative, NamedFile};
+    use rocket::form::{DataField, Form, FromFormField, ValueField};
     use super::*;
-    use rocket::State;
-    use sqlx::types::chrono::{DateTime, Utc};
-    use sqlx::types::Uuid;
-    use sqlx::FromRow;
-    use std::collections::HashMap;
 
-    #[derive(Deserialize)]
-    pub struct QuotePart {
-        author: String,
-        quote: String,
+    #[get("/assets/<path..>")]
+    pub async fn serve(path: PathBuf) -> Option<NamedFile> {
+        let path = Path::new(relative!("assets")).join(path);
+        NamedFile::open(path).await.ok()
     }
 
-    #[derive(Serialize, FromRow, Clone)]
-    pub struct Quote {
-        id: Uuid,
-        author: String,
-        quote: String,
-        created_at: DateTime<Utc>,
-        version: i32,
+    #[get("/23/star")]
+    pub fn star() -> &'static str {
+        r#"<div id="star" class="lit"></div>"#
     }
 
-    impl From<QuotePart> for Quote {
-        fn from(part: QuotePart) -> Self {
-            Self {
-                id: Uuid::new_v4(),
-                author: part.author,
-                quote: part.quote,
-                created_at: Utc::now(),
-                version: 1,
+    pub enum Color {
+        Red,
+        Blue,
+        Purple
+    }
+
+    impl FromStr for Color {
+        type Err = ();
+
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            match s {
+                "red" => Ok(Self::Red),
+                "blue" => Ok(Self::Blue),
+                "purple" => Ok(Self::Purple),
+                _ => Err(()),
             }
         }
     }
 
-    async fn get_quote(
-        id: &Uuid,
-        state: &State<MyState>,
-    ) -> Result<Quote, Either<NotFound<String>, BadRequest<String>>> {
-        sqlx::query_as("SELECT * FROM quotes WHERE id = $1")
-            .bind(id)
-            .fetch_one(&state.pool)
-            .await
-            .map_err(|e| Either::Left(NotFound(e.to_string())))
+    #[derive(Responder, Debug)]
+    pub enum ColorError {
+        #[response(status = 418)]
+        InvalidColor(()),
     }
 
-    fn process_uuid(
-        uuid: Result<Uuid, rocket::serde::uuid::Error>,
-    ) -> Result<Uuid, Either<NotFound<String>, BadRequest<String>>> {
-        match uuid {
-            Ok(uuid) => Ok(uuid),
-            Err(_) => Err(Either::Right(BadRequest("Bad UUID".to_string()))),
+    impl FromParam<'_> for Color {
+        type Error = ColorError;
+
+        fn from_param(param: &str) -> Result<Self, Self::Error> {
+            param.parse().map_err(|_| ColorError::InvalidColor(()))
         }
     }
 
-    #[post("/19/reset")]
-    pub async fn reset(state: &State<MyState>) {
-        // Clear the quotes table in the database.
-        sqlx::query("DELETE FROM quotes")
-            .execute(&state.pool)
-            .await
-            .unwrap();
+    impl Display for Color {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::Red => write!(f, "red"),
+                Self::Blue => write!(f, "blue"),
+                Self::Purple => write!(f, "purple"),
+            }
+        }
     }
 
-    #[get("/19/cite/<id>")]
-    pub async fn cite(
-        id: Result<Uuid, rocket::serde::uuid::Error>,
-        state: &State<MyState>,
-    ) -> Result<Json<Quote>, Either<NotFound<String>, BadRequest<String>>> {
-        let id = process_uuid(id)?;
-        // Respond with the quote of the given ID.
-        // Use 404 Not Found if a quote with the ID does not exist.
-        let quote = get_quote(&id, state).await?;
-
-        Ok(Json(quote))
+    impl Color {
+        fn next(&self) -> Self {
+            match self {
+                Self::Red => Self::Blue,
+                Self::Blue => Self::Purple,
+                Self::Purple => Self::Red,
+            }
+        }
     }
 
-    #[delete("/19/remove/<id>")]
-    pub async fn remove(
-        id: Result<Uuid, rocket::serde::uuid::Error>,
-        state: &State<MyState>,
-    ) -> Result<Json<Quote>, Either<NotFound<String>, BadRequest<String>>> {
-        let id = process_uuid(id)?;
-        // Delete and respond with the quote of the given ID.
-        // Use 404 Not Found if a quote with the ID does not exist.
-        let quote = get_quote(&id, state).await?;
-
-        sqlx::query("DELETE FROM quotes WHERE id = $1")
-            .bind(id)
-            .execute(&state.pool)
-            .await
-            .map_err(|e| Either::Left(NotFound(e.to_string())))?;
-
-        Ok(Json(quote))
+    #[get("/23/present/<color>")]
+    pub fn present(color: Result<Color, ColorError>) -> Result<String, ColorError> {
+        let color = color?;
+        let next_color = color.next().to_string();
+        let color = color.to_string();
+        Ok(format!(r#"<div class="present {color}" hx-get="/23/present/{next_color}" hx-swap="outerHTML">
+                    <div class="ribbon"></div>
+                    <div class="ribbon"></div>
+                    <div class="ribbon"></div>
+                    <div class="ribbon"></div>
+                </div>"#))
     }
 
-    #[put("/19/undo/<id>", data = "<input>")]
-    pub async fn undo(
-        id: Result<Uuid, rocket::serde::uuid::Error>,
-        input: Json<QuotePart>,
-        state: &State<MyState>,
-    ) -> Result<Json<Quote>, Either<NotFound<String>, BadRequest<String>>> {
-        let id = process_uuid(id)?;
-        // Update the author and text, and increment the version number of the quote of the given ID.
-        // Respond with the updated quote.
-        // Use 404 Not Found if a quote with the ID does not exist.
-        let mut quote = get_quote(&id, state).await?;
-        quote.author = input.author.clone();
-        quote.quote = input.quote.clone();
-        quote.version += 1;
-
-        sqlx::query("UPDATE quotes SET author = $1, quote = $2, version = $3 WHERE id = $4")
-            .bind(&input.author)
-            .bind(&input.quote)
-            .bind(quote.version)
-            .bind(id)
-            .execute(&state.pool)
-            .await
-            .map_err(|e| Either::Left(NotFound(e.to_string())))?;
-
-        Ok(Json(quote))
+    pub enum OrnamentState {
+        On,
+        Off,
     }
 
-    #[post("/19/draft", data = "<input>")]
-    pub async fn draft(input: Json<QuotePart>, state: &State<MyState>) -> Created<Json<Quote>> {
-        // Add a quote with a random UUID v4.
-        // Respond with the quote and 201 Created.
-        let quote = Quote::from(input.0);
-        sqlx::query("INSERT INTO quotes (id, author, quote, created_at, version) values ($1, $2, $3, $4, $5)")
-            .bind(quote.id)
-            .bind(&quote.author)
-            .bind(&quote.quote)
-            .bind(quote.created_at)
-            .bind(quote.version)
-            .execute(&state.pool)
-            .await
-            .unwrap();
-        Created::new("ha").body(Json(quote))
+    impl FromStr for OrnamentState {
+        type Err = ();
+
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            match s {
+                "on" => Ok(Self::On),
+                "off" => Ok(Self::Off),
+                _ => Err(()),
+            }
+        }
     }
 
-    #[derive(Serialize)]
-    pub struct ListResponse {
-        quotes: Vec<Quote>,
-        page: i32,
-        next_token: Option<String>,
+    #[derive(Responder, Debug)]
+    pub enum OrnamentStateError {
+        #[response(status = 418)]
+        InvalidOrnamentState(()),
     }
 
-    static TOKENS: LazyLock<Mutex<HashMap<String, i32>>> =
-        LazyLock::new(|| Mutex::new(HashMap::new()));
-    const CHARSET: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    impl FromParam<'_> for OrnamentState {
+        type Error = OrnamentStateError;
 
-    #[get("/19/list?<token>")]
-    pub async fn list(
-        state: &State<MyState>,
-        token: Option<String>,
-    ) -> Result<Json<ListResponse>, BadRequest<()>> {
-        let next_token = random_string::generate(16, CHARSET);
-        let page = match token {
-            Some(token) => *TOKENS.lock().unwrap().get(&token).ok_or(BadRequest(()))?,
-            None => 1,
+        fn from_param(param: &str) -> Result<Self, Self::Error> {
+            param.parse().map_err(|_| OrnamentStateError::InvalidOrnamentState(()))
+        }
+    }
+
+    impl Display for OrnamentState {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::On => write!(f, "on"),
+                Self::Off => write!(f, "off"),
+            }
+        }
+    }
+
+    impl OrnamentState {
+        fn next(&self) -> Self {
+            match self {
+                Self::On => Self::Off,
+                Self::Off => Self::On,
+            }
+        }
+    }
+
+    #[get("/23/ornament/<state>/<n>")]
+    pub fn ornament(state: Result<OrnamentState, OrnamentStateError>, n: &str) -> Result<String, OrnamentStateError> {
+        let n = html_escape::encode_double_quoted_attribute(n);
+        let state = state?;
+        let on_class = match state {
+            OrnamentState::Off => "",
+            OrnamentState::On => " on",
         };
-        TOKENS.lock().unwrap().insert(next_token.clone(), page + 1);
+        let new_state = state.next().to_string();
+        Ok(format!(
+            r#"<div class="ornament{on_class}" id="ornament{n}" hx-trigger="load delay:2s once" hx-get="/23/ornament/{new_state}/{n}" hx-swap="outerHTML"></div>"#
+        ))
+    }
 
-        let quotes: Vec<Quote> =
-            sqlx::query_as("SELECT * FROM quotes ORDER BY created_at ASC LIMIT 4 OFFSET $1")
-                .bind((page - 1) * 3)
-                .fetch_all(&state.pool)
-                .await
-                .unwrap();
-        let (quotes, last_page) = match quotes.len() {
-            0..4 => (quotes, true),
-            4 => (quotes[0..3].to_vec(), false),
-            _ => unreachable!(),
-        };
-        println!("{}, {last_page}", quotes.len());
+    #[derive(Clone, FromForm)]
+    pub struct LockfileForm {
+        lockfile: LockfileResult,
+    }
 
-        let next_token = match last_page {
-            true => None,
-            false => Some(next_token),
-        };
+    #[derive(Clone)]
+    pub struct LockfileResult {
+        lockfile: Result<Lockfile, LockfileError>,
+    }
 
-        Ok(Json(ListResponse {
-            quotes,
-            page,
-            next_token,
-        }))
+    #[rocket::async_trait]
+    impl<'r> FromFormField<'r> for LockfileResult {
+        fn from_value(field: ValueField<'r>) -> rocket::form::Result<'r, Self> {
+            let s = field.value;
+            Self::parse(s)
+        }
+
+        async fn from_data(field: DataField<'r, '_>) -> rocket::form::Result<'r, Self> {
+            Self::parse(std::str::from_utf8(&field.data.open(ByteUnit::from(10000000)).into_bytes().await?)?)
+        }
+    }
+
+    impl<'r> LockfileResult {
+        fn parse(s: &str) -> rocket::form::Result<'r, Self> {
+            Ok(Self {
+                lockfile: toml::from_str(s).map_err(|_| LockfileError::BadForm(())),
+            })
+        }
+    }
+
+    #[derive(Deserialize, Clone)]
+    pub struct Lockfile {
+        package: Vec<Package>,
+    }
+
+    #[derive(Deserialize, Clone)]
+    pub struct Package {
+        // name: String,
+        // version: String,
+        // source: String,
+        checksum: Option<String>,
+        // dependencies: Option<Vec<String>>,
+    }
+
+    #[derive(Responder, Debug, Clone, Copy)]
+    pub enum LockfileError {
+        #[response(status = 400)]
+        BadForm(()),
+        #[response(status = 422)]
+        BadChecksum(()),
+    }
+
+    #[post("/23/lockfile", data = "<lockfile>")]
+    pub fn lockfile(lockfile: Option<Form<LockfileForm>>) -> Result<String, LockfileError> {
+        let lockfile = lockfile.ok_or(LockfileError::BadForm(()))?.lockfile.lockfile.clone()?;
+
+        Ok(lockfile.package
+            .into_iter()
+            .filter_map(|x| x.checksum)
+            .map(|x| {
+                let color = x.get(0..6).ok_or(LockfileError::BadChecksum(()))?;
+                // Check for invalid color part
+                u32::from_str_radix(color, 16).map_err(|_| LockfileError::BadChecksum(()))?;
+                let top = u32::from_str_radix(x.get(6..8).ok_or(LockfileError::BadChecksum(()))?, 16).map_err(|_| LockfileError::BadChecksum(()))?.to_string();
+                let left = u32::from_str_radix(x.get(8..10).ok_or(LockfileError::BadChecksum(()))?, 16).map_err(|_| LockfileError::BadChecksum(()))?.to_string();
+                println!(r#"<div style="background-color:#{color};top:{top}px;left:{left}px;"></div>"#);
+                Ok(format!(r#"<div style="background-color:#{color};top:{top}px;left:{left}px;"></div>"#))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .join(""))
     }
 }
 
 struct MyState {
-    pool: sqlx::PgPool,
+    // pool: sqlx::PgPool,
 }
 
 #[shuttle_runtime::main]
-async fn main(#[shuttle_shared_db::Postgres] pool: sqlx::PgPool) -> shuttle_rocket::ShuttleRocket {
-    pool.execute(include_str!("../schema.sql"))
-        .await
-        .map_err(CustomError::new)?;
+async fn main(
+    // #[shuttle_shared_db::Postgres] pool: sqlx::PgPool,
+) -> shuttle_rocket::ShuttleRocket {
+    // pool.execute(include_str!("../schema.sql"))
+    //     .await
+    //     .map_err(CustomError::new)?;
 
-    let state = MyState { pool };
+    let state = MyState {
+        // pool,
+    };
     let rocket = rocket::build()
         .mount(
             "/",
@@ -873,12 +1099,17 @@ async fn main(#[shuttle_shared_db::Postgres] pool: sqlx::PgPool) -> shuttle_rock
                 day_16::wrap,
                 day_16::unwrap,
                 day_16::decode_,
-                day_19::reset,
-                day_19::cite,
-                day_19::remove,
-                day_19::undo,
-                day_19::draft,
-                day_19::list,
+                // day_19::reset,
+                // day_19::cite,
+                // day_19::remove,
+                // day_19::undo,
+                // day_19::draft,
+                // day_19::list,
+                day_23::serve,
+                day_23::star,
+                day_23::present,
+                day_23::ornament,
+                day_23::lockfile,
             ],
         )
         .manage(state);

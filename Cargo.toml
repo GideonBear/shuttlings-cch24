@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 cargo-manifest = "0.17.0"
 grid = "0.15.0"
+html-escape = "0.2.13"
 itertools = "0.13.0"
 jsonwebtoken = { version = "9.3.0", default-features = false, features = ["use_pem"] }
 rand = "0.8.5"
