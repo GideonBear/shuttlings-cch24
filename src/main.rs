@@ -376,7 +376,7 @@ mod day_12 {
         fn new_random(rand: &mut StdRng) -> Self {
             Board {
                 grid: Grid::from_vec(
-                    repeat_with(|| rand.gen::<bool>())
+                    repeat_with(|| rand.random::<bool>())
                         .take(BOARD_SIZE * BOARD_SIZE)
                         .map(|x| match x {
                             true => State::Filled(Team::Cookie),
