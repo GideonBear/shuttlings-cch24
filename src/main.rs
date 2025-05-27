@@ -7,13 +7,11 @@ use rand::prelude::StdRng;
 use rand::{Rng, SeedableRng};
 use rocket::http::Status;
 use rocket::request::{FromParam, FromRequest};
-use rocket::response::status::{BadRequest, Created, NoContent, NotFound};
+use rocket::response::status::{BadRequest, NoContent};
 use rocket::response::Redirect;
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
-use rocket::{delete, get, post, put, routes, Request, Responder};
-use shuttle_runtime::CustomError;
-use sqlx::Executor;
+use rocket::{get, post, routes, Request, Responder};
 use std::cmp::PartialEq;
 use std::fmt::Display;
 use std::iter::repeat_with;
@@ -403,7 +401,7 @@ mod day_12 {
             match self {
                 Self::InProgress => (),
                 Self::No => writeln!(f, "No winner.")?,
-                Self::Yes(team) => writeln!(f, "{} wins!", team)?,
+                Self::Yes(team) => writeln!(f, "{team} wins!")?,
             }
             Ok(())
         }
